@@ -1,11 +1,11 @@
 ; Procedures
 GLOBAL 	InitializeVideo:PROC, \
         ResetVideo:PROC, \
-        ClearVideoBuffer:PROC, \
         UpdateScreen:PROC, \
         RenderBlock:PROC, \
         RenderBall:PROC, \
-        RenderPaddle:PROC
+        RenderPaddle:PROC, \
+        ClearBallAndPaddle:PROC
         
 ; Constants
 SCREEN_WIDTH equ 320

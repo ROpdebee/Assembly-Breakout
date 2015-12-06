@@ -20,6 +20,9 @@ PADDLE_Y equ 190
 
 TOP_SKIP_ROWS equ 2 ; Top rows to skip
 
+PADDLE_SPEED equ 5  ; Counted in pixels
+PADDLE_MAX_X equ SCREEN_WIDTH - PADDLE_W
+
 ;±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±?
 ; CODE
 ;±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±?
@@ -83,13 +86,13 @@ PROC InitializeWorld
     xor eax, eax                    ; Clear out eax, later used for storing color
     xor ecx, ecx                    ; Clear out ecx, used as counter
 
-@@blockloop:
+@@blockLoop:
     movsb                           ; Move the current block from this level into blocks
     mov al, [esi-1]                 ; Get the color of the block, put in AL. Color is 1 byte. Keep in mind that ESI has changed
     call DrawBlock, ecx, eax        ; Have to pass the whole EAX register via stack, hence EAX needed to be cleared before storing the color in AL
     inc ecx
     cmp ecx, BLOCKS_AMOUNT
-    jne @@blockloop                 ; If ECX is not yet at the end, do another block
+    jne @@blockLoop                 ; If ECX is not yet at the end, do another block
 
     ret
 ENDP InitializeWorld
@@ -134,22 +137,96 @@ ENDP DrawBlock
 PROC GameLoop
     USES eax
 
-@@levelloop:
-    call InitializeWorld
+@@levelLoop:
+    call InitializeWorld            ; First initialize the world
+
+@@refresh:
+    ; First remove the ball and paddle because we're only selectively redrawing the changed parts
+    call ClearBallAndPaddle, [ball_x], [ball_y], [paddle_x], PADDLE_Y
+
+    ; Process user input and move paddle
+    call ProcessInput
+    jz @@gameOver                   ; If zero flag has been set, we should quit the game
+
+    ; Update graphics
     call RenderBall, [ball_x], [ball_y]
     call RenderPaddle, [paddle_x], PADDLE_Y
-
     call UpdateScreen
-    
-    mov ah, 0
-    int 16h
 
-@@game_over:                        ; Game has finished
+    ; Start over
+    jmp @@refresh
+
+@@gameOver:                         ; Game has finished
     ; Reset the video mode
     call ResetVideo
     ret
 ENDP GameLoop
 
+; Process potential user input and move paddle if necessary
+; Sets the zero flag (ZF) when ESC has been pressed
+PROC ProcessInput
+    USES eax
+
+    mov ah, 01h                     ; Test key pressed
+    int 16h                         ; call Keyboard BIOS
+    jz @@end                        ; If no key pressed, jump to end
+
+    ; There was input, so process it
+    ; We still need to remove the character from the buffer,
+    ; even though it's already in AX
+    mov ah, 00h                     ; Get input from buffer
+    int 16h
+    cmp al, 1bh                     ; Test if ESC ASCII value has been entered
+    je @@esc                        ; ESC key pressed
+    cmp ah, 4bh                     ; Test scan code for left arrow
+    je @@left                       ; Left arrow pressed
+    cmp ah, 4dh                     ; Test scan code for right arrow
+    jne @@end                       ; If right arrow pressed, fall through, else jump to end (can't move paddle vertically)
+
+    ; Right key pressed
+    call PaddleMoveRight
+    jmp @@end
+
+@@left:
+    ; Left key pressed
+    call PaddleMoveLeft
+    jmp @@end
+
+@@esc:
+    ; Escape key pressed
+    lahf                            ; Load status flags into AH for modification
+    or ah, 40h                      ; Set ZF
+    sahf                            ; Store status flags
+    ret                             ; End immediately
+
+@@end:
+    ; We have to make sure the zero flag is not set because this will end the game even when it's not necessary
+    lahf                            ; Load flags into AH
+    and ah, 0bfh                    ; Unset zero flag
+    sahf                            ; Store flags
+    ret
+ENDP ProcessInput
+
+; Move the paddle to the left
+PROC PaddleMoveLeft
+    sub [paddle_x], PADDLE_SPEED    ; Adjust the x position
+    jns @@end                       ; If sign bit is not set (paddle_x >= 0), skip the next lines
+    ; New x position falls off screen
+    mov [paddle_x], 0               ; Reset x position to leftmost position
+@@end:
+    ret
+ENDP PaddleMoveLeft
+
+; Move the paddle to the right
+PROC PaddleMoveRight
+    add [paddle_x], PADDLE_SPEED    ; Adjust the x position
+    cmp [paddle_x], PADDLE_MAX_X
+    jle @@end                       ; If paddle_x doesn't fall off the screen (paddle_x <= PADDLE_MAX_X), jump to the next label
+    ; New x position falls off screen
+    mov [paddle_x], PADDLE_MAX_X
+@@end:
+    ret
+ENDP PaddleMoveRight
 
 ;±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±?
 ; DATA
@@ -170,7 +247,12 @@ DATASEG
 
     ; Levels
     ; Note: Should be kept in continuous memory!
-    level_1 db BLOCKS_AMOUNT dup (1)
+    level_1 db BLOCKS_COLUMNS dup (6)
+            db BLOCKS_COLUMNS dup (5)
+            db BLOCKS_COLUMNS dup (4)
+            db BLOCKS_COLUMNS dup (3)
+            db BLOCKS_COLUMNS dup (2)
+            db BLOCKS_COLUMNS dup (1)
 
     level_ptr dd offset level_1     ; Will point to the current level
     level_end dd offset level_ptr   ; Will point to the end of the levels

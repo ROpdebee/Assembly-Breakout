@@ -49,6 +49,14 @@ DATASEG
             db 64 * 4 dup (7)
             db 0, 62 dup (7), 0
             db 0, 0, 60 dup (7), 0, 0
+
+    ; To clear the ball
+    _ball_clear dw BALL_W, BALL_H
+                db BALL_W * BALL_H dup (0)
+
+    ; To clear the paddle
+    _paddle_clear   dw PADDLE_W, PADDLE_H
+                    db PADDLE_W * PADDLE_H dup (0)
    
 
 ;=============================================================================
@@ -86,6 +94,10 @@ ENDP InitializeVideo
 ; Reset the video mode
 PROC ResetVideo
     USES eax
+
+    ; Clear the screen first, this will get rid of some ugly transitions
+    call ClearVideoBuffer
+    call UpdateScreen
 
     ; Set video mode back to original text mode
     mov ax, 3h
@@ -223,6 +235,22 @@ PROC RenderPaddle
 
     ret
 ENDP RenderPaddle
+
+; Clear the ball and paddle from the screen buffer
+; Parameters: ball_x, ball_y, paddle_x, paddle_y (dwords)
+; Returns: none
+PROC ClearBallAndPaddle
+    ARG @@ball_x:dword, @@ball_y:dword,\
+        @@paddle_x:dword, @@paddle_y:dword
+
+    ; First clear the ball
+    call drawSprite, offset _ball_clear, offset _screenBuffer, [@@ball_x], [@@ball_y]
+
+    ; Then clear the paddle
+    call drawSprite, offset _paddle_clear, offset _screenBuffer, [@@paddle_x], [@@paddle_y]
+
+    ret
+ENDP ClearBallAndPaddle
     
 
 END
