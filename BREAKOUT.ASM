@@ -72,10 +72,10 @@ PROC InitializeWorld
     USES ecx, esi, edi, eax
 
     ; Move ball and paddle to default positions
-    mov [word ptr offset ball_x], BALL_START_X
-    mov [byte ptr offset ball_y], BALL_START_Y
-    mov [word ptr offset paddle_x], PADDLE_START_X
-    mov [byte ptr offset remaining_blocks], 0
+    mov [ball_x], BALL_START_X
+    mov [ball_y], BALL_START_Y
+    mov [paddle_x], PADDLE_START_X
+    mov [remaining_blocks], 0
 
     ; Load the level and draw the blocks
     mov esi, [level_ptr]
@@ -153,6 +153,9 @@ ENDP GameLoop
 
 ;±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±?
 ; DATA
+;
+; Data that is to be passed via stack MUST be declared as a dword (dd),
+; otherwise this might cause inconsistensies when calling procedures.
 ;±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±?
 DATASEG
     ; Message to be displayed in start window
@@ -182,7 +185,7 @@ UDATASEG
     ball_x      dd ?    ; x position of the ball (as dword because will be passed as argument via stack)
     ball_y      dd ?    ; y position of the ball
     paddle_x    dd ?    ; x position of the paddle
-    remaining_blocks dw ?
+    remaining_blocks db ?
 
 ;±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±?
 ; STACK
