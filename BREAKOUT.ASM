@@ -155,8 +155,15 @@ ENDP GameLoop
 ; DATA
 ;±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±?
 DATASEG
-    welcome_msg db "Welcome to BREAKOUT!", 0ah, 0dh   ; Line feed and carriage return
-                db "Press any key to start the game or ESC to quit.", 24h ; Terminating $
+    ; Message to be displayed in start window
+    welcome_msg db ' ', 34 dup ('*'), 0ah, 0dh  ; 0Ah = Line Feed, 0Dh = Carriage Return (both necessary on DOS)
+                db " *      Welcome to BREAKOUT!      *", 0ah, 0dh
+                db ' ', 34 dup ('*'), 0ah, 0dh
+                db 0ah, 0dh
+                db " Press any key to start the game or ESC to quit.", 0ah, 0dh
+                db " Controls:", 0ah, 0dh
+                db 9h, "- Use the left and right arrows to move the paddle.", 0ah, 0dh  ; 9h = Horizontal Tab
+                db 9h, "- Press ESC to return to quit the game and return to this screen.", 24h ; 24h = Terminating $
 
     ; Levels
     ; Note: Should be kept in continuous memory!
