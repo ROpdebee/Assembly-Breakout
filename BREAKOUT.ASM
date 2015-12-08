@@ -41,7 +41,7 @@ start:
 
 ; Print welcome message and instructions and wait for keyboard input
 PROC GameEntry
-    ARG none RETURNS eax
+    ARG RETURNS eax            ; May not be an optimal solution but Turbo Assembler complains if there is a RETURNS statement without ARG
     USES edx
 
     ; Print welcome message and instructions
@@ -78,8 +78,8 @@ PROC Game
 
 @@refresh:
     ; Update graphics first
-    call RenderBall, [ball_x], [ball_y]
     call RenderPaddle, [paddle_x], PADDLE_Y
+    call RenderBall, [ball_x], [ball_y]
     call UpdateScreen
 
     ; Then remove the ball and paddle because we're only selectively redrawing the changed parts and their coordinates are about to change
@@ -92,6 +92,10 @@ PROC Game
     ; Move the ball
     call MoveBall
     jz @@lifeLost                   ; If zero flag has been set, then a life has been lost
+
+    ; Check for collisions
+    call CheckCollisions
+    sub [@@remaining_blocks], eax
 
     ; Start over
     jmp @@refresh
@@ -120,7 +124,7 @@ ENDP Game
 ; Returns the total amount of blocks in EAX
 PROC InitializeWorld
     ARG @@level:dword RETURNS eax
-    USES ecx, esi, edi, eax
+    USES ecx, esi, edi
 
     ; Load the level and draw the blocks
     mov esi, [@@level]
@@ -131,7 +135,7 @@ PROC InitializeWorld
 
 @@blockLoop:
     movsb                           ; Move the current block from this level into blocks
-    mov bl, [esi-1]                 ; Get the color of the block, put in AL. Color is 1 byte. Keep in mind that ESI has changed
+    mov bl, [esi-1]                 ; Get the color of the block, put in BL. Color is 1 byte. Keep in mind that ESI has changed
     cmp bl, 0
     jz @@blackBlock                 ; Not a block if it's coloured black, so bypass the next lines
     inc eax                         ; Add to block count
@@ -152,7 +156,7 @@ PROC DrawBlock
     ARG @@block:dword, @@color:dword
     USES ebx, eax, edx
 
-    mov eax, [@@block]              ; Argument block in bl
+    mov eax, [@@block]              ; Argument block in eax
     xor edx, edx                    ; Clear out edx for division
 
     ; Calculate row and column number
@@ -179,6 +183,10 @@ PROC ResetBallAndPaddle
     mov [ball_x], BALL_START_X
     mov [ball_y], BALL_START_Y
     mov [paddle_x], PADDLE_START_X
+
+    ; Reset the speeds
+    mov [ball_x_speed], BALL_START_X_SPEED
+    mov [ball_y_speed], BALL_START_Y_SPEED
 
     ret
 ENDP ResetBallAndPaddle
@@ -299,6 +307,111 @@ PROC MoveBall
     sahf
     ret
 ENDP MoveBall
+
+; Check for collisions
+; Returns amount of blocks hit in EAX
+PROC CheckCollisions
+    ARG RETURNS eax
+    USES ebx, ecx, edx
+
+    mov ebx, [ball_y]               ; Put the top y position of the ball in ebx
+    mov ecx, ebx
+    add ecx, BALL_H - 1             ; Put the bottom y position of the ball in ecx
+    mov edx, [ball_x]               ; Put the left x position in edx
+
+    ; Determine how we should check for collisions based on y position
+    cmp ebx, PADDLE_BOTTOM          ; Ball overshoots the paddle if its top is underneath the paddle
+    jg @@onlyX                      ; If the ball has overshot the paddle, we only need to check the x position to make sure it bounces off the sides
+    cmp ecx, PADDLE_Y - 1           ; Now compare the bottom of the ball to the top of the paddle (check one pixel above because we don't want the ball to go 'in' the paddle)
+    jge @@checkPaddle               ; The ball possibly collides with the paddle, check this
+    ; Ball is definitely above the paddle
+    cmp ebx, BLOCKS_BOTTOM          ; Compare top of ball against bottom of blocks
+    jg @@onlyX                      ; If the ball is underneath the lowest point of the blocks, we only have to check the sides
+    cmp ecx, BLOCKS_TOP             ; Compare bottom of ball against the highest point of the blocks
+    jge @@checkBlock                ; Check if the ball collides with a block if it is situated somewhere amongst the blocks
+    cmp ebx, 0                      ; Compare the top of the ball against the top of the screen
+    je @@bounceTop                  ; If the ball hits the top, then bounce if off
+    ; If we reach this, the ball is situated between the top of the screen and the top of the blocks, so we only need to check the x position -> fall through
+
+@@onlyX:
+    ; Check if it bounces against any of the vertical sides and bounce accordingly. Assumed edx contains the left x position of the ball
+    cmp edx, 0
+    je @@bounceX                    ; If it bounces against the left side, change the trajectory accordingly
+    cmp edx, BALL_MAX_X
+    je @@bounceX                    ; If it bounces against the right side, change the trajectory accordingly
+    jmp @@end                       ; If it doesn't collide with anything, just jump to the end
+
+@@bounceX:
+    neg [ball_x_speed]              ; Just invert the x speed, leave the y speed intact
+    jmp @@end                       ; Jump to the end
+
+@@checkPaddle:
+    ; We need to check if it actually collides with the paddle
+    mov ecx, [paddle_x]             ; We won't need the bottom y position of the ball anymore
+    add edx, BALL_W - 1
+
+    ; ECX is now the leftmost position of the paddle, EDX the rightmost position of the ball. EBX is the top y position of the ball
+    cmp edx, ecx                    ; Check if ball lies in front of the paddle
+    jl @@onlyX                      ; If it does, just check if it doesn't bounce against the walls
+    add ecx, PADDLE_ZONE_1          ; ECX now points just beyond the end of zone 1
+    cmp edx, ecx                    ; See if ball lies in this zone
+    jl @@zone1
+    add ecx, PADDLE_ZONE_2          ; ECX now points just beyond the end of zone 2
+    cmp edx, ecx                    ; See if ball lies in this zone
+    jl @@zone2
+    add ecx, PADDLE_ZONE_3          ; ECX points beyond zone 3
+    cmp edx, ecx
+    jl @@zone3
+    add ecx, PADDLE_ZONE_4
+    cmp edx, ecx
+    jl @@zone4
+    ; When moving ECX the last time, we need to keep in mind that the right side of the ball can fall off the paddle while the left side is still on it
+    add ecx, PADDLE_ZONE_5 + BALL_W - 1
+    cmp edx, ecx
+    jl @@zone5                      ; If the ball lies in front of this position, it's still on the paddle and belongs to zone 5
+    jmp @@onlyX                     ; Otherwise it lies beyond the reach of the paddle and we should only check for collisions with the walls
+
+; Zones: Adjust the x speed and then determine how to bounce vertically
+@@zone1:                            ; Adjustments performed in zone 1
+    mov [ball_x_speed], -3
+    jmp @@paddleVerticalBounce
+
+@@zone2:
+    mov [ball_x_speed], -2
+    jmp @@paddleVerticalBounce
+
+@@zone3:
+    mov [ball_x_speed], -1
+    jmp @@paddleVerticalBounce
+
+@@zone4:
+    mov [ball_x_speed], 2
+    jmp @@paddleVerticalBounce
+
+@@zone5:
+    mov [ball_x_speed], 3
+    jmp @@paddleVerticalBounce
+
+@@paddleVerticalBounce:
+    ; EBX contains top y position of the ball
+    ; If the top of the ball has gone beyond the top of the paddle (e.g. at the sides) then the trajectory shouldn't be adjusted because the ball can't go back up
+    cmp ebx, PADDLE_Y               ; Compare ebx to the top position of the paddle
+    jge @@end
+    ; Ball is still (partially) above the paddle, so bounce back up
+    mov [ball_y_speed], -1
+    jmp @@end
+
+@@bounceTop:
+    ; We know it bounces against the top, so invert the y speed
+    mov [ball_y_speed], 1           ; y speed can only be 1 or -1 so we can just adjust it instead of negating
+    jmp @@onlyX                     ; Might be in a corner, then it'd collide with the side as well and the x speed would need adjustment
+
+@@checkBlock:
+    ;call BlockCollision             ; Call to other procedure to try to keep things neat
+
+@@end:
+    ret
+ENDP CheckCollisions
 
 ;±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±?
 ; STACK
