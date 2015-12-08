@@ -12,6 +12,8 @@ BLOCKS_AMOUNT equ BLOCKS_COLUMNS * BLOCKS_ROWS
 ; Ball constants
 BALL_START_X equ (SCREEN_WIDTH - BALL_W) / 2
 BALL_START_Y equ 100
+BALL_MAX_Y equ SCREEN_HEIGHT - BALL_H
+BALL_MAX_X equ SCREEN_WIDTH - BALL_W
  
 ; Paddle constants
 PADDLE_START_X equ (SCREEN_WIDTH - PADDLE_W) / 2
@@ -19,7 +21,9 @@ PADDLE_Y equ 190
 PADDLE_SPEED equ 5  ; Counted in pixels
 PADDLE_MAX_X equ SCREEN_WIDTH - PADDLE_W
 
-TOP_SKIP_ROWS equ 2 ; Top rows to skip
+; Misc constants
+TOP_SKIP_ROWS equ 2     ; Top rows to skip
+STARTING_LIVES equ 5    ; Amount of lives the player starts with
 
 ;±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±?
 ; DATA
@@ -38,8 +42,11 @@ DATASEG
                 db 9h, "- Use the left and right arrows to move the paddle.", 0ah, 0dh  ; 9h = Horizontal Tab
                 db 9h, "- Press ESC to return to quit the game and return to this screen.", 24h ; 24h = Terminating $
 
+    game_over_msg   db "OH NO! You've used up all your lives :(", 0ah, 0dh, 24h
+
     ; Levels
     ; Note: Should be kept in continuous memory!
+    ; Every byte in memory indicates a color for a block, ALL blocks must be given a color!
     level_1 db BLOCKS_COLUMNS dup (6)
             db BLOCKS_COLUMNS dup (5)
             db BLOCKS_COLUMNS dup (4)
@@ -47,8 +54,11 @@ DATASEG
             db BLOCKS_COLUMNS dup (2)
             db BLOCKS_COLUMNS dup (1)
 
-    level_ptr dd offset level_1     ; Will point to the current level
-    level_end dd offset level_ptr   ; Will point to the end of the levels
+    level_end db 0 ; Take the offset of this pointer and you get the end of all levels
+
+    ; Ball speeds
+    ball_x_speed dd 0   ; Negative value: move left with that much pixels, positive value: move right with that much pixels
+    ball_y_speed dd 1   ; Negative value: move up with that much pixels, positive value: move down with that much pixels
 
 
 
@@ -60,5 +70,3 @@ UDATASEG
     ball_x      dd ?    ; x position of the ball (as dword because will be passed as argument via stack)
     ball_y      dd ?    ; y position of the ball
     paddle_x    dd ?    ; x position of the paddle
-    remaining_blocks db ?
-    remaining_lives db ?
