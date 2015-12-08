@@ -7,7 +7,7 @@ GLOBAL 	InitializeVideo:PROC, \
         RenderPaddle:PROC, \
         ClearBallAndPaddle:PROC
         
-; Constants
+; Constants shared between GUI.asm and BREAKOUT.asm
 SCREEN_WIDTH equ 320
 SCREEN_HEIGHT equ 200
 
