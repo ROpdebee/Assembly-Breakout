@@ -312,12 +312,13 @@ ENDP MoveBall
 ; Returns amount of blocks hit in EAX
 PROC CheckCollisions
     ARG RETURNS eax
-    USES ebx, ecx, edx
+    USES ebx, ecx, esi
+
+    xor eax, eax                    ; Clear out eax for possible counting
 
     mov ebx, [ball_y]               ; Put the top y position of the ball in ebx
     mov ecx, ebx
     add ecx, BALL_H - 1             ; Put the bottom y position of the ball in ecx
-    mov edx, [ball_x]               ; Put the left x position in edx
 
     ; Determine how we should check for collisions based on y position
     cmp ebx, PADDLE_BOTTOM          ; Ball overshoots the paddle if its top is underneath the paddle
@@ -330,14 +331,18 @@ PROC CheckCollisions
     cmp ecx, BLOCKS_TOP             ; Compare bottom of ball against the highest point of the blocks
     jge @@checkBlock                ; Check if the ball collides with a block if it is situated somewhere amongst the blocks
     cmp ebx, 0                      ; Compare the top of the ball against the top of the screen
-    je @@bounceTop                  ; If the ball hits the top, then bounce if off
+    je short @@bounceTop            ; If the ball hits the top, then bounce if off (SHORT jump because Turbo Assembler complains otherwise)
     ; If we reach this, the ball is situated between the top of the screen and the top of the blocks, so we only need to check the x position -> fall through
 
+;*******
+; Walls
+;*******
 @@onlyX:
-    ; Check if it bounces against any of the vertical sides and bounce accordingly. Assumed edx contains the left x position of the ball
-    cmp edx, 0
+    ; Check if it bounces against any of the vertical sides and bounce accordingly
+    mov ebx, [ball_x]               ; Set left position of the ball in ebx
+    cmp ebx, 0
     je @@bounceX                    ; If it bounces against the left side, change the trajectory accordingly
-    cmp edx, BALL_MAX_X
+    cmp ebx, BALL_MAX_X
     je @@bounceX                    ; If it bounces against the right side, change the trajectory accordingly
     jmp @@end                       ; If it doesn't collide with anything, just jump to the end
 
@@ -345,55 +350,47 @@ PROC CheckCollisions
     neg [ball_x_speed]              ; Just invert the x speed, leave the y speed intact
     jmp @@end                       ; Jump to the end
 
+;********
+; Paddle
+;********
 @@checkPaddle:
-    ; We need to check if it actually collides with the paddle
-    mov ecx, [paddle_x]             ; We won't need the bottom y position of the ball anymore
-    add edx, BALL_W - 1
+    ; We need to check if it actually collides with the paddle 
+    mov ecx, [ball_x]
+    add ecx, BALL_W - 1
+    sub ecx, [paddle_x]
+    ; ECX is now the difference in pixels between the rightmost x of the ball and the x coordinate of the paddle,
+    ; this allows us to work more with constants instead of getting values from memory all the time
 
-    ; ECX is now the leftmost position of the paddle, EDX the rightmost position of the ball. EBX is the top y position of the ball
-    cmp edx, ecx                    ; Check if ball lies in front of the paddle
-    jl @@onlyX                      ; If it does, just check if it doesn't bounce against the walls
-    add ecx, PADDLE_ZONE_1          ; ECX now points just beyond the end of zone 1
-    cmp edx, ecx                    ; See if ball lies in this zone
-    jl @@zone1
-    add ecx, PADDLE_ZONE_2          ; ECX now points just beyond the end of zone 2
-    cmp edx, ecx                    ; See if ball lies in this zone
-    jl @@zone2
-    add ecx, PADDLE_ZONE_3          ; ECX points beyond zone 3
-    cmp edx, ecx
-    jl @@zone3
-    add ecx, PADDLE_ZONE_4
-    cmp edx, ecx
-    jl @@zone4
-    ; When moving ECX the last time, we need to keep in mind that the right side of the ball can fall off the paddle while the left side is still on it
-    add ecx, PADDLE_ZONE_5 + BALL_W - 1
-    cmp edx, ecx
-    jl @@zone5                      ; If the ball lies in front of this position, it's still on the paddle and belongs to zone 5
-    jmp @@onlyX                     ; Otherwise it lies beyond the reach of the paddle and we should only check for collisions with the walls
+    ; Check if ball lies in front of the paddle
+    js @@onlyX                      ; If sign bit is set from the previous instruction, the difference is negative and the ball lies completely in front of the paddle
+    ; Check if ball lies behind the paddle
+    cmp ecx, PADDLE_W + BALL_W
+    jge @@onlyX                     ; If it does, just check if it doesn't bounce against the walls
+    ; We know for sure that the ball lies somewhere on the paddle if we reach this point
 
-; Zones: Adjust the x speed and then determine how to bounce vertically
-@@zone1:                            ; Adjustments performed in zone 1
-    mov [ball_x_speed], -3
-    jmp @@paddleVerticalBounce
+    push ebx                        ; We're going to use EBX later, so save it on the stack
+    mov esi, offset zone_speeds     ; ESI now contains the address of the first zone speed
+    mov ebx, offset zone_limits     ; Load the address of the first zone limit into EBX
 
-@@zone2:
-    mov [ball_x_speed], -2
-    jmp @@paddleVerticalBounce
+    ; Now find the zone
+@@findZone:
+    cmp ecx, [ebx]                  ; See if ball lies within the limits pointed to by ebx
+    jl @@zoneFound
+    ; If we reach this point, it doesn't
+    add esi, 4                      ; Make the speed pointer point 4 bytes further, to the next zone speed
+    add ebx, 4                      ; Make the limit pointer point 4 bytes further as well
+    ; Since the limits and speeds are in continuous memory, we can exploit this to see if we've checked all limits
+    cmp ebx, offset zone_speeds     ; Compare the pointer to the limit to the address of the first zone speed
+    jne @@findZone                  ; If they're not equal, we haven't reached the end yet
+    ; We've tested all zones but the ball fell within none of the limits, but it hits the paddle, hence it belongs to the last zone, to which the speed already points
+    ; We can just fall through
 
-@@zone3:
-    mov [ball_x_speed], -1
-    jmp @@paddleVerticalBounce
-
-@@zone4:
-    mov [ball_x_speed], 2
-    jmp @@paddleVerticalBounce
-
-@@zone5:
-    mov [ball_x_speed], 3
-    jmp @@paddleVerticalBounce
-
-@@paddleVerticalBounce:
-    ; EBX contains top y position of the ball
+    ; We found the zone and ESI points to the correct speed adjustment
+@@zoneFound:
+    mov ecx, [esi]                  ; Get the zone speed from memory, we have to do this explicitely because memory-to-memory mov's are not supported
+    mov [ball_x_speed], ecx         ; Store the new x speed
+    pop ebx                         ; Remember to restore the previously pushed y position of the ball
+    ; We still need to potentially change the y trajectory
     ; If the top of the ball has gone beyond the top of the paddle (e.g. at the sides) then the trajectory shouldn't be adjusted because the ball can't go back up
     cmp ebx, PADDLE_Y               ; Compare ebx to the top position of the paddle
     jge @@end
@@ -401,17 +398,33 @@ PROC CheckCollisions
     mov [ball_y_speed], -1
     jmp @@end
 
+;***************
+; Top of screen
+;***************
 @@bounceTop:
     ; We know it bounces against the top, so invert the y speed
     mov [ball_y_speed], 1           ; y speed can only be 1 or -1 so we can just adjust it instead of negating
     jmp @@onlyX                     ; Might be in a corner, then it'd collide with the side as well and the x speed would need adjustment
 
+;********
+; Blocks
+;********
 @@checkBlock:
-    ;call BlockCollision             ; Call to other procedure to try to keep things neat
+    call BlockCollision             ; Call to other procedure to try to keep things neat
 
 @@end:
     ret
 ENDP CheckCollisions
+
+; Check for collisions with blocks
+; Returns amount of blocks hit in EAX
+PROC BlockCollision
+    ARG RETURNS eax
+
+    xor eax, eax                    ; Clear out eax for counting
+
+    ret
+ENDP BlockCollision
 
 ;±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±?
 ; STACK

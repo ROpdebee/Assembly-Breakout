@@ -29,12 +29,6 @@ PADDLE_Y equ 190
 PADDLE_SPEED equ 10  ; Counted in pixels
 PADDLE_MAX_X equ SCREEN_WIDTH - PADDLE_W
 PADDLE_BOTTOM equ PADDLE_Y + PADDLE_H - 1
-PADDLE_ZONE_1 equ 8     ; First 8 pixels of the paddle belong to zone 1
-PADDLE_ZONE_2 equ 12    ; Next 12 pixels belong to zone 2
-PADDLE_ZONE_3 equ 24    ; Next 24 pixels belong to zone 3
-PADDLE_ZONE_4 equ 12    ; Next 12 pixels belong to zone 4
-PADDLE_ZONE_5 equ 8     ; Next 8 pixels belong to zone 5
-; Zones are used to determine the speed adjustments when bouncing off the paddle
 
 ;±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±?
 ; DATA
@@ -54,6 +48,11 @@ DATASEG
                 db 9h, "- Press ESC to return to quit the game and return to this screen.", 24h ; 24h = Terminating $
 
     game_over_msg   db "OH NO! You've used up all of your lives :(", 0ah, 0dh, 24h
+
+    ; Zones are used to determine the speed adjustments when bouncing off the paddle
+    zone_limits dd 8, 20, 36, 52, 60    ; Array of limits of each zone for the rightmost position of the ball, from left to right
+    zone_speeds dd -3, -2, -1, 1, 2, 3  ; Array of speeds corresponding to each zone, as dwords because they are to be assigned to other dwords
+    ; Any ball that falls outside these zones but still hits the paddle belongs to zone 6, so the mismatch in array elements is intentional
 
     ; Levels
     ; Note: Should be kept in continuous memory!
