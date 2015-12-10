@@ -3,7 +3,7 @@
 # =============================================================================
 
 # Settings
-objs = breakout.obj vga.obj gui.obj
+objs = breakout.obj vga.obj gui.obj sound.obj
 dest = breakout.exe
 
 # =============================================================================

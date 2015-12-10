@@ -63,7 +63,9 @@ DATASEG
     zone_speeds dd -3, -2, -1, 1, 2, 3  ; Array of speeds corresponding to each zone, as dwords because they are to be assigned to other dwords
     ; Any ball that falls outside these zones but still hits the paddle belongs to zone 6, so the mismatch in array elements is intentional
 
+    ;********
     ; Levels
+    ;********
     ; Note: Should be kept in continuous memory!
     ; Every byte in memory indicates a color for a block, ALL blocks must be given a color!
     level_1 db BLOCKS_COLUMNS * 2 dup (3)
@@ -137,6 +139,15 @@ DATASEG
     level_end db 0 ; Take the offset of this pointer and you get the end of all levels
 
     blocks_changed  db BLOCKS_MAX_CHANGED dup (-1)   ; Array of block numbers that have changed in the last generation
+
+    ;********
+    ; Sounds
+    ;********
+    block_hit_sound     dw 2500, 10
+    paddle_hit_sound    dw 2000, 10
+    wall_hit_sound      dw 1500, 10
+    life_lost_sound     dw 7000, 20
+
 
 ;=============================================================================
 ; Uninitialized DATA

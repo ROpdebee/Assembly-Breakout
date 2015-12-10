@@ -8,6 +8,7 @@ ASSUME cs:_TEXT,ds:FLAT,es:FLAT,fs:FLAT,gs:FLAT
 
 INCLUDE "gui.inc"
 INCLUDE "data.asm"
+INCLUDE "sound.inc"
 
 ;±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±?
 ; CODE
@@ -71,6 +72,9 @@ PROC Game
     ; Score is initialize zero
     mov [@@score], 0
 
+    ; Initialize sounds
+    call InitializeSound
+
 @@levelLoop:
     call InitializeWorld, [@@level] ; First initialize the world
     ; Amount of blocks now in EAX
@@ -92,9 +96,12 @@ PROC Game
     call ClearBallAndPaddle, [ball_x], [ball_y], [paddle_x], PADDLE_Y
     call DrawChangedBlocks          ; Redraw the changed blocks, wait until after the ball has been cleared from the screen to avoid graphic glitches (dents in the blocks etc)
 
+    ; Handle sounds
+    call SoundHandler
+
     ; Process user input and move paddle
     call ProcessInput
-    jz short @@gameOver             ; If zero flag has been set, we should quit the game
+    jz @@gameOver                   ; If zero flag has been set, we should quit the game
 
     ; Move the ball
     call MoveBall
@@ -112,11 +119,13 @@ PROC Game
 @@lifeLost:                         ; The player has lost a life
     ; Remove the ball and paddle because they're potentially going to be reset
     call ClearBallAndPaddle, [ball_x], [ball_y], [paddle_x], PADDLE_Y
+    ; Play a sound
+    call PlaySound, offset life_lost_sound
     ; Decrease the lives
     dec [@@lives]
     jnz @@lifeLoop                  ; Restart the level, but keep the blocks intact
     ; Otherwise when there are zero lives left, reset the video mode and print a message indicating that the game has been lost
-    call ResetVideo
+    call Stop
     mov ah, 09h                     ; DOS - Print String
     mov edx, offset no_lives_msg
     int 21h                         ; DOS call will print the string
@@ -127,16 +136,25 @@ PROC Game
     cmp [@@level], offset level_end
     jne @@levelLoop                 ; If the game hasn't gone through all the levels, load in the new level
     ; All levels have been won
-    call ResetVideo
+    call Stop
     mov ah, 09h                     ; DOS print string
     mov edx, offset game_won_msg
     int 21h                         ; DOS call
     ret                             ; Exit game loop
 
 @@gameOver:
-    call ResetVideo
+    call Stop
     ret
 ENDP Game
+
+; Cleans up everything at the end of a game:
+; - Reset video mode
+; - Stop any sound that is still playing
+PROC Stop
+    call ResetVideo
+    call StopSound
+    ret
+ENDP Stop
 
 ; Initializes the game world and draws the starting environment
 ; Parameters: level (dword): Pointer to the level that should be loaded
@@ -412,7 +430,7 @@ PROC CheckCollisions
     cmp ecx, BLOCKS_TOP             ; Compare bottom of ball against the highest point of the blocks
     jge @@checkBlock                ; Check if the ball collides with a block if it is situated somewhere amongst the blocks
     cmp ebx, 0                      ; Compare the top of the ball against the top of the screen
-    je short @@bounceTop            ; If the ball hits the top, then bounce if off (SHORT jump because Turbo Assembler complains otherwise)
+    je @@bounceTop                  ; If the ball hits the top, then bounce if off (SHORT jump because Turbo Assembler complains otherwise)
     ; If we reach this, the ball is situated between the top of the screen and the top of the blocks, so we only need to check the x position -> fall through
 
 ;*******
@@ -425,10 +443,11 @@ PROC CheckCollisions
     je @@bounceX                    ; If it bounces against the left side, change the trajectory accordingly
     cmp ebx, BALL_MAX_X
     je @@bounceX                    ; If it bounces against the right side, change the trajectory accordingly
-    jmp short @@end                       ; If it doesn't collide with anything, just jump to the end
+    jmp @@end                       ; If it doesn't collide with anything, just jump to the end
 
 @@bounceX:
     neg [ball_x_speed]              ; Just invert the x speed, leave the y speed intact
+    call PlaySound, offset wall_hit_sound
     jmp @@end                       ; Jump to the end
 
 ;********
@@ -470,6 +489,7 @@ PROC CheckCollisions
 @@zoneFound:
     mov ecx, [esi]                  ; Get the zone speed from memory, we have to do this explicitely because memory-to-memory mov's are not supported
     mov [ball_x_speed], ecx         ; Store the new x speed
+    call PlaySound, offset paddle_hit_sound
     pop ebx                         ; Remember to restore the previously pushed y position of the ball
     ; We still need to potentially change the y trajectory
     ; If the top of the ball has gone beyond the top of the paddle (e.g. at the sides) then the trajectory shouldn't be adjusted because the ball can't go back up
@@ -485,6 +505,7 @@ PROC CheckCollisions
 @@bounceTop:
     ; We know it bounces against the top, so invert the y speed
     mov [ball_y_speed], 1           ; y speed can only be 1 or -1 so we can just adjust it instead of negating
+    call PlaySound, offset wall_hit_sound
     jmp @@onlyX                     ; Might be in a corner, then it'd collide with the side as well and the x speed would need adjustment
 
 ;********
@@ -580,6 +601,8 @@ PROC BlockCollision
     mov [edi], bl                   ; Indicate that the block has been changed
     inc edi
     inc eax                         ; Increase eax to display that we've hit a block
+    ; Play a sound, this call will be made multiple times if multiple blocks have been hit, but the duration of the sound will not change
+    call PlaySound, offset block_hit_sound
     jmp @@processBlocks             ; Process another block
 
 @@done:
