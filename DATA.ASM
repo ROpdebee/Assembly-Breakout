@@ -14,6 +14,7 @@ BLOCKS_ROWS equ 6
 BLOCKS_AMOUNT equ BLOCKS_COLUMNS * BLOCKS_ROWS
 BLOCKS_BOTTOM equ (BLOCKS_ROWS + TOP_SKIP_ROWS) * BLOCK_H - 1
 BLOCKS_TOP equ TOP_SKIP_ROWS * BLOCK_H
+BLOCKS_MAX_CHANGED equ 4 ; There will never be more than 4 blocks changed in one generation (probably never more than two but you never know)
 
 ; Ball constants
 BALL_START_X equ (SCREEN_WIDTH - BALL_W) / 2
@@ -70,10 +71,11 @@ DATASEG
 ; Uninitialized DATA
 ;=============================================================================
 UDATASEG
-    blocks      db BLOCKS_AMOUNT dup (?)
-    ball_x      dd ?    ; x position of the ball (as dword because will be passed as argument via stack)
-    ball_y      dd ?    ; y position of the ball
-    paddle_x    dd ?    ; x position of the paddle
+    blocks          db BLOCKS_AMOUNT dup (?)
+    blocks_changed  db BLOCKS_MAX_CHANGED dup (?)
+    ball_x          dd ?    ; x position of the ball (as dword because will be passed as argument via stack)
+    ball_y          dd ?    ; y position of the ball
+    paddle_x        dd ?    ; x position of the paddle
     ; Ball speeds
-    ball_x_speed dd ?   ; Negative value: move left with that much pixels, positive value: move right with that much pixels
-    ball_y_speed dd ?   ; Negative value: move up with that much pixels, positive value: move down with that much pixels
+    ball_x_speed    dd ?    ; Negative value: move left with that much pixels, positive value: move right with that much pixels
+    ball_y_speed    dd ?    ; Negative value: move up with that much pixels, positive value: move down with that much pixels

@@ -84,6 +84,7 @@ PROC Game
 
     ; Then remove the ball and paddle because we're only selectively redrawing the changed parts and their coordinates are about to change
     call ClearBallAndPaddle, [ball_x], [ball_y], [paddle_x], PADDLE_Y
+    call DrawChangedBlocks          ; Redraw the changed blocks, removing the ball might have messed up some graphics
 
     ; Process user input and move paddle
     call ProcessInput
@@ -138,7 +139,7 @@ PROC InitializeWorld
     mov bl, [esi-1]                 ; Get the color of the block, put in BL. Color is 1 byte. Keep in mind that ESI has changed
     cmp bl, 0
     jz @@blackBlock                 ; Not a block if it's coloured black, so bypass the next lines
-    inc eax                         ; Add to block count
+    add eax, ebx                    ; Add to block count, we pass the colour but this colour indicates how long the block will last
     call DrawBlock, ecx, ebx        ; Have to pass the whole EBX register via stack, hence EBX needed to be cleared before storing the color in BL
 @@blackBlock:
     inc ecx
@@ -176,6 +177,26 @@ PROC DrawBlock
 
     ret
 ENDP DrawBlock
+
+; Draws all the valid block numbers in blocks_changed
+PROC DrawChangedBlocks
+    USES eax, ecx, esi, ebx
+
+    xor eax, eax                    ; Clear out eax
+    mov ecx, BLOCKS_MAX_CHANGED
+    mov esi, offset blocks_changed
+    mov ebx, offset blocks
+@@drawLoop:
+    lodsb                           ; Load a block number into AL
+    cmp al, 0
+    jl @@end                        ; If the block number is invalid, we already got to the end so stop
+    call DrawBlock, eax, [dword ptr ebx + eax]
+    mov [byte ptr esi-1], -1        ; Overwrite the previously read in entry (we could do this faster by just moving a dword after the loop but BLOCKS_MAX_CHANGED may change some day)
+    dec ecx
+    jnz @@drawLoop
+@@end:
+    ret
+ENDP DrawChangedBlocks
 
 PROC ResetBallAndPaddle
 
@@ -344,7 +365,7 @@ PROC CheckCollisions
     je @@bounceX                    ; If it bounces against the left side, change the trajectory accordingly
     cmp ebx, BALL_MAX_X
     je @@bounceX                    ; If it bounces against the right side, change the trajectory accordingly
-    jmp @@end                       ; If it doesn't collide with anything, just jump to the end
+    jmp short @@end                       ; If it doesn't collide with anything, just jump to the end
 
 @@bounceX:
     neg [ball_x_speed]              ; Just invert the x speed, leave the y speed intact
@@ -411,6 +432,7 @@ PROC CheckCollisions
 ;********
 @@checkBlock:
     call BlockCollision             ; Call to other procedure to try to keep things neat
+    jmp @@onlyX                     ; Check for collisions with walls as well
 
 @@end:
     ret
@@ -418,13 +440,189 @@ ENDP CheckCollisions
 
 ; Check for collisions with blocks
 ; Returns amount of blocks hit in EAX
+; Note: Don't assume anything about the current state of registers!
 PROC BlockCollision
     ARG RETURNS eax
+    USES ebx, ecx, edx, edi
 
+    ; We still have to manually do the BP manipulation because the IDEAL syntax doesn't do this when there are no arguments or local variables
+    push ebp
+    mov ebp, esp
+
+    xor dl, dl                      ; Clear out DL as it'll be used to indicate which corners have hit a block
+
+    ; Get a block number for each 'corner' of the ball, and push this block number on the stack if it's valid
+    ; EBP and ESP point to the same address at this moment, so we can use EBP to see if we've processed all blocks later on
+    ; First get the block number for the top left corner
+    mov eax, [ball_x]
+    mov ecx, [ball_y]
+    call GetBlockNumber, eax, ecx   ; Block number for top left corner now in EBX
+    cmp ebx, 0
+    js @@topRight                   ; If block number is invalid, don't save it
+    ; Check the color of the block
+    cmp [byte ptr offset blocks + ebx], 0
+    jz @@topRight                   ; If it's a black block, the corner hasn't actually hit anything so ignore it
+    or dl, 1                        ; Indicate that this corner has hit a block
+    push ebx                        ; Save the block number on the stack
+    ; Now check the top right corner
+@@topRight:
+    add eax, BALL_W - 1
+    call GetBlockNumber, eax, ecx   ; Block number for top right corner now in EBX
+    cmp ebx, 0
+    js @@bottomRight
+    cmp [byte ptr offset blocks + ebx], 0
+    jz @@bottomRight
+    or dl, 2
+    push ebx
+    ; Bottom right corner
+@@bottomRight:
+    add ecx, BALL_H - 1
+    call GetBlockNumber, eax, ecx
+    cmp ebx, 0
+    js @@bottomLeft
+    cmp [byte ptr offset blocks + ebx], 0
+    jz @@bottomLeft
+    or dl, 4
+    push ebx
+    ; Bottom left corner
+@@bottomLeft:
+    sub eax, BALL_W - 1
+    call GetBlockNumber, eax, ecx
+    cmp ebx, 0
+    js @@cornersDone                ; If block number is invalid, proceed to checking the others
+    cmp [byte ptr offset blocks + ebx], 0
+    jz @@cornersDone
+    or dl, 8
+    push ebx                        ; If it's not a black block, push it
+
+@@cornersDone:
+    ; All valid blocks on the stack, keep in mind that some block numbers may be repeated
     xor eax, eax                    ; Clear out eax for counting
+    mov edi, offset blocks_changed  ; To save the block numbers of the changed blocks
+@@processBlocks:
+    cmp esp, ebp
+    je @@done                       ; If we've reached the bottom of this activation record's stack, all blocks have been processed
+    pop ebx                         ; Pop a block number into EBX
+    ; Still need to check if this block number doesn't occur multiple times
+    mov ecx, esp                    ; Move the stack pointer into ecx
+@@checkDuplicates:
+    cmp ecx, ebp
+    je @@noDuplicates               ; If we're at the bottom of the stack, there haven't been any duplicates
+    cmp ebx, [dword ptr ecx]        ; Compare the current block number against the one we're considering in the stack
+    je @@processBlocks              ; If they're equal, just skip this block number, we'll process it when we reach the duplicate
+    ; Otherwise, these are not duplicates, but there may be another block number that is, so keep searching
+    add ecx, 4                      ; We move the copy of the stack pointer 4 bytes up, so that it points to the previous stack element (stack grows down)
+    jmp @@checkDuplicates           ; Check the next element
 
+@@noDuplicates:                     ; We haven't found any duplicated block number for the one we're considering now, so process this block number
+    mov ecx, [offset blocks + ebx]  ; Put the value of the block into ECX (we won't need the copy of the stack pointer anymore), block is definitely not black (already checked earlier)
+    dec ecx                         ; Decrement the value of the block
+    call DrawBlock, ebx, ecx
+    mov [edi], bl                   ; Indicate that the block has been changed
+    inc edi
+    inc eax                         ; Increase eax to display that we've hit a block
+    mov [offset blocks + ebx], ecx  ; Store the new block value
+    jmp @@processBlocks             ; Process another block
+
+@@done:
+    VERSION m510                    ; Temporarily switch to MASM 5.1 so we can use anonymous labels
+    ; We still need to adjust the trajectory of the ball. Recall that DL was adjusted to indicate which corners hit a block
+    ; Based on DL we can determine which speeds should be negated. There should be a better way to do this instead of turning bits off and then comparing...
+    mov dh, dl                      ; Copy DL to DH because it is going to be modified
+    and dl, 0ch
+    cmp dl, 0ch
+    je short @@verticalBounce       ; Bottom of the ball has hit something
+    mov dl, dh
+    and dl, 3h
+    cmp dl, 3h
+    je short @@verticalBounce       ; Top of the ball has hit something
+    ; Neither the top nor the bottom has hit anything, but the sides may have hit something
+
+@@horizontalCheck:
+    mov dl, dh
+    and dl, 9h
+    cmp dl, 9h
+    je short @@horizontalBounce     ; Left side has hit something
+    mov dl, dh
+    and dl, 6h
+    cmp dl, 6h
+    je short @@horizontalBounce     ; Right side has hit something
+    cmp dh, 0
+    jp short @@end
+    ; Only one corner has hit something, so the ball has hit a block's corner
+    ; Depending on which corner has hit the block, we need to change the trajectory. The direction from which the ball comes doesn't matter!
+    shr dh, 1
+    jnz @F
+    ; Top left corner has hit
+    mov [ball_y_speed], 1
+    mov [ball_x_speed], 1           ; To be completely correct, we should invert this value only if it's signed, but that'd take too many instructions for a very rare case
+    jmp @@end
+@@: shr dh, 1
+    jnz @F
+    ; Top right corner has hit
+    mov [ball_y_speed], 1
+    mov [ball_x_speed], -1
+    jmp @@end
+@@: mov [ball_y_speed], -1          ; All other possibilities bounce back up, saves us exactly one instruction
+    shr dh, 1
+    jnz @F
+    ; Bottom right corner has hit
+    mov [ball_x_speed], -1
+    jmp @@end
+    ; In any other case (which should by now be only one), the bottom left corner has hit
+@@: mov [ball_x_speed], 1
+    jmp @@end
+
+@@verticalBounce:
+    neg [ball_y_speed]              ; Invert the ball's y trajectory
+    jmp @@horizontalCheck           ; Ball possibly also hits something with the sides
+
+@@horizontalBounce:
+    neg [ball_x_speed]              ; Invert the ball's x trajectory
+    ; Fall through to the end
+
+@@end:
+    ; Clean up the stack and base pointers as we've adjusted them at the beginning of the procedure
+    mov esp, ebp
+    pop ebp
     ret
 ENDP BlockCollision
+
+; Get the block number corresponding to the argument coordinates
+; Parameters: x, y (dwords)
+; Returns block number in ebx. Negative block number indicates that there is no block on this coordinate
+PROC GetBlockNumber
+    ARG @@x:dword, @@y:dword RETURNS ebx
+    USES eax, ecx
+
+    xor ebx, ebx                    ; Clear out EBX
+
+    ; First calculate the column number
+    mov eax, [@@x]                  ; Store dividend in ax. x is definitely smaller than SCREEN_WIDTH so it'll fit, but it's passed as a double word
+    mov cl, BLOCK_W                 ; Divisor is the block width
+    div cl                          ; We can use div, because we know dividend is not negative. Column number will now be AL, remainder in AH is of no importance
+    mov bl, al                      ; Move column number into BL, so that EBX is the column number
+
+    ; Now calculate the row number
+    mov eax, [@@y]                  ; Store dividend into ax
+    sub eax, TOP_SKIP_ROWS*BLOCK_H  ; Transform y so that the first row would start at 0, ignoring the top rows that have been skipped
+    js @@invalid                    ; If y is now negative, there will definitely be no block because the coordinate is situated in the top rows
+    mov cl, BLOCK_H                 ; Divisor is the block height
+    div cl                          ; Divide word in AX by byte in DL, so that row number is in AL and remainder in AH
+    cmp al, BLOCKS_ROWS             ; Check if it's a valid row
+    jge @@invalid
+    xor ah, ah                      ; Clear out the remainder, so now eax contains the row number
+    imul eax, BLOCKS_COLUMNS        ; Transform the row number to the block number of its first block
+    add ebx, eax                    ; Add this block number to the column number previously in ebx
+    ; EBX now contains the block number
+    ret                             ; Return to caller
+
+@@invalid:
+    mov ebx, -1                     ; Store -1 into EBX to indicate that it's an invalid block number
+    ret
+ENDP GetBlockNumber
+
+
 
 ;±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±?
 ; STACK
