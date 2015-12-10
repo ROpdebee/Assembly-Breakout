@@ -29,34 +29,8 @@ DATASEG
                 db 31, 0, 63   ; Color 6 = Purple
                 db 31, 31, 31  ; Color 7 = Gray
                 db 63, 63, 63  ; Color 8 = White
-    ;==================
     ; Sprites
-    ;==================
-    ; Always use multiples of 4 as dimensions! (Faster drawing)
-
-    ; Ball sprite
-    _ball   dw BALL_W, BALL_H
-            db 0, 0, 4 dup (8), 0, 0
-            db 0, 6 dup (8), 0
-            db 32 dup (8)
-            db 0, 6 dup (8), 0
-            db 0, 0, 4 dup (8), 0, 0
-
-    ; Paddle sprite
-    _paddle dw PADDLE_W, PADDLE_H
-            db 0, 0, 60 dup (7), 0, 0
-            db 0, 62 dup (7), 0
-            db 64 * 4 dup (7)
-            db 0, 62 dup (7), 0
-            db 0, 0, 60 dup (7), 0, 0
-
-    ; To clear the ball
-    _ball_clear dw BALL_W, BALL_H
-                db BALL_W * BALL_H dup (0)
-
-    ; To clear the paddle
-    _paddle_clear   dw PADDLE_W, PADDLE_H
-                    db PADDLE_W * PADDLE_H dup (0)
+    INCLUDE "sprites.asm"
    
 
 ;=============================================================================
@@ -176,12 +150,12 @@ PROC drawSprite
     ret
 ENDP drawSprite
 
-; Render a block
+; Draw a block
 ; Parameters: x: x-coordinate
 ;             y: y-coordinate
 ;             color: Color
 ; Returns: none
-PROC RenderBlock
+PROC DrawBlock
     ARG @@x:dword, @@y:dword,\
         @@color:dword
     USES ecx, edi, edx, eax
@@ -212,29 +186,56 @@ PROC RenderBlock
     jnz @@vLine                     ; If we're not at the last line, do the next line
     ; The whole block is rendered now
     ret
-ENDP RenderBlock
+ENDP DrawBlock
 
-; Render the ball
+; Draw the ball
 ; Parameters: x, y
 ; Returns: none
-PROC RenderBall
+PROC DrawBall
     ARG @@x:dword, @@y:dword
 
     call drawSprite, offset _ball, offset _screenBuffer, [@@x], [@@y]
 
     ret
-ENDP RenderBall
+ENDP DrawBall
 
-; Render the paddle
+; Draw the paddle
 ; Parameters: x, y
 ; Returns: none
-PROC RenderPaddle
+PROC DrawPaddle
     ARG @@x:dword, @@y:dword
 
     call drawSprite, offset _paddle, offset _screenBuffer, [@@x], [@@y]
 
     ret
-ENDP RenderPaddle
+ENDP DrawPaddle
+
+PROC DrawLife
+    ARG @@x:dword, @@y:dword
+
+    call drawSprite, offset _life, offset _screenBuffer, [@@x], [@@y]
+
+    ret
+ENDP DrawLife
+
+PROC DrawScoreText
+    ARG @@x:dword, @@y:dword
+
+    call drawSprite, offset _score, offset _screenBuffer, [@@x], [@@y]
+
+    ret
+ENDP DrawScoreText
+
+PROC DrawDigit
+    ARG @@digit:dword, @@x:dword, @@y:dword
+    USES ebx
+
+    mov ebx, DIGIT_W * DIGIT_H + 4  ; Amount of bytes for one color = 1 byte per pixel + 2 words for the dimensions of the sprite
+    imul ebx, [@@digit]
+    add ebx, offset _digits         ; EBX now points to the correct digit sprite
+    call drawSprite, ebx, offset _screenBuffer, [@@x], [@@y]
+    ret
+ENDP DrawDigit
 
 ; Clear the ball and paddle from the screen buffer
 ; Parameters: ball_x, ball_y, paddle_x, paddle_y (dwords)
@@ -251,6 +252,16 @@ PROC ClearBallAndPaddle
 
     ret
 ENDP ClearBallAndPaddle
-    
+
+; Clear the top rows that have been skipped by block generation
+PROC ClearTopRows
+    USES eax, ecx, edi
+
+    mov ecx, TOP_SKIP_ROWS * SCREEN_WIDTH * BLOCK_H / 4
+    xor eax, eax
+    mov edi, offset _screenBuffer       ; The top rows start at the very first pixel of the screen 
+    rep stosd                           ; Clear out everything
+    ret
+ENDP ClearTopRows
 
 END

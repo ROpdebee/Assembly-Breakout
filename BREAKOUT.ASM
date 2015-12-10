@@ -60,13 +60,16 @@ ENDP GameEntry
 ; Set of loops that power the game
 PROC Game
     USES eax
-    LOCAL @@lives:dword, @@level:dword, @@remaining_blocks:dword
+    LOCAL @@lives:dword, @@level:dword, @@remaining_blocks:dword, @@score:dword
 
     ; Set the lives to the starting amount
     mov [@@lives], STARTING_LIVES
 
     ; Start with the first level
     mov [@@level], offset level_1
+
+    ; Score is initialize zero
+    mov [@@score], 0
 
 @@levelLoop:
     call InitializeWorld, [@@level] ; First initialize the world
@@ -78,17 +81,20 @@ PROC Game
 
 @@refresh:
     ; Update graphics first
-    call RenderPaddle, [paddle_x], PADDLE_Y
-    call RenderBall, [ball_x], [ball_y]
+    call ClearTopRows               ; Clear the top rows that are used to store information because all this information is to be redrawn
+    call DrawLives, [@@lives]
+    call DrawScore, [@@score]
+    call DrawPaddle, [paddle_x], PADDLE_Y
+    call DrawBall, [ball_x], [ball_y]
     call UpdateScreen
 
     ; Then remove the ball and paddle because we're only selectively redrawing the changed parts and their coordinates are about to change
     call ClearBallAndPaddle, [ball_x], [ball_y], [paddle_x], PADDLE_Y
-    call DrawChangedBlocks          ; Redraw the changed blocks, removing the ball might have messed up some graphics
+    call DrawChangedBlocks          ; Redraw the changed blocks, wait until after the ball has been cleared from the screen to avoid graphic glitches (dents in the blocks etc)
 
     ; Process user input and move paddle
     call ProcessInput
-    jz @@gameOver                   ; If zero flag has been set, we should quit the game
+    jz short @@gameOver             ; If zero flag has been set, we should quit the game
 
     ; Move the ball
     call MoveBall
@@ -96,7 +102,9 @@ PROC Game
 
     ; Check for collisions
     call CheckCollisions
+    add [@@score], eax              ; Calculate the new score
     sub [@@remaining_blocks], eax
+    jz @@levelWon                   ; If there are no remaining blocks, the player has won the level
 
     ; Start over
     jmp @@refresh
@@ -110,12 +118,22 @@ PROC Game
     ; Otherwise when there are zero lives left, reset the video mode and print a message indicating that the game has been lost
     call ResetVideo
     mov ah, 09h                     ; DOS - Print String
-    mov edx, offset game_over_msg
+    mov edx, offset no_lives_msg
     int 21h                         ; DOS call will print the string
-    ret                             ; Return immediately
+    ret                             ; Exit game loop
 
-@@gameOver:                         ; Game has finished
-    ; Reset the video mode
+@@levelWon:
+    add [@@level], BLOCKS_AMOUNT    ; Level ptr now points to the next level
+    cmp [@@level], offset level_end
+    jne @@levelLoop                 ; If the game hasn't gone through all the levels, load in the new level
+    ; All levels have been won
+    call ResetVideo
+    mov ah, 09h                     ; DOS print string
+    mov edx, offset game_won_msg
+    int 21h                         ; DOS call
+    ret                             ; Exit game loop
+
+@@gameOver:
     call ResetVideo
     ret
 ENDP Game
@@ -140,7 +158,7 @@ PROC InitializeWorld
     cmp bl, 0
     jz @@blackBlock                 ; Not a block if it's coloured black, so bypass the next lines
     add eax, ebx                    ; Add to block count, we pass the colour but this colour indicates how long the block will last
-    call DrawBlock, ecx, ebx        ; Have to pass the whole EBX register via stack, hence EBX needed to be cleared before storing the color in BL
+    call DrawBlockNumber, ecx, ebx  ; Have to pass the whole EBX register via stack, hence EBX needed to be cleared before storing the color in BL
 @@blackBlock:
     inc ecx
     cmp ecx, BLOCKS_AMOUNT
@@ -153,7 +171,7 @@ ENDP InitializeWorld
 ; Parameters: block: A block number
 ;             color: The block's color
 ; Returns: none
-PROC DrawBlock
+PROC DrawBlockNumber
     ARG @@block:dword, @@color:dword
     USES ebx, eax, edx
 
@@ -172,17 +190,18 @@ PROC DrawBlock
     ; Calculate x coordinate from column
     imul edx, BLOCK_W               ; x coordinate now in edx
 
-    ; Render the block with these coordinates and the color
-    call RenderBlock, edx, eax, [@@color]
+    ; Draw the block with these coordinates and the color
+    call DrawBlock, edx, eax, [@@color]
 
     ret
-ENDP DrawBlock
+ENDP DrawBlockNumber
 
 ; Draws all the valid block numbers in blocks_changed
 PROC DrawChangedBlocks
-    USES eax, ecx, esi, ebx
+    USES eax, ecx, esi, ebx, edx
 
     xor eax, eax                    ; Clear out eax
+    xor edx, edx                    ; To store color
     mov ecx, BLOCKS_MAX_CHANGED
     mov esi, offset blocks_changed
     mov ebx, offset blocks
@@ -190,13 +209,54 @@ PROC DrawChangedBlocks
     lodsb                           ; Load a block number into AL
     cmp al, 0
     jl @@end                        ; If the block number is invalid, we already got to the end so stop
-    call DrawBlock, eax, [dword ptr ebx + eax]
+    mov dl, [ebx + eax]             ; Store color in DL
+    call DrawBlockNumber, eax, edx  ; Pass whole EDX because it expects a dword (rest of EDX is already cleared out)
     mov [byte ptr esi-1], -1        ; Overwrite the previously read in entry (we could do this faster by just moving a dword after the loop but BLOCKS_MAX_CHANGED may change some day)
     dec ecx
     jnz @@drawLoop
 @@end:
     ret
 ENDP DrawChangedBlocks
+
+; Draw the lives
+PROC DrawLives
+    ARG @@lives:dword
+    USES ecx, edi
+
+    mov ecx, [@@lives]
+    mov edi, LIVES_STARTING_X
+@@drawLife:                         ; As long as there are lives to draw, draw one and move the x position
+    call DrawLife, edi, LIVES_STARTING_Y
+    add edi, LIFE_W + LIVES_SEPARATOR
+    dec ecx
+    jnz @@drawLife
+    ret
+ENDP DrawLives
+
+; Draw the score from right to left
+PROC DrawScore
+    ARG @@score:dword
+    USES eax, edi, ebx, edx
+
+    ; Adapt the print numbers exercise to draw the numbers to the screen
+    ; Don't check for signed numbers, definitely unsigned.
+    mov eax, [@@score]
+    mov edi, SCORE_RIGHT_X
+    mov ebx, 10                     ; Divide by 10 to get the first digit
+@@digit:
+    xor edx, edx                    ; Clear out EDX for division
+    div ebx                         ; Remainder in EDX, quotient in EAX
+    call DrawDigit, edx, edi, SCORE_Y
+    sub edi, DIGIT_W + 1            ; Position for next element (include one separating pixel)
+    cmp eax, 0
+    jnz @@digit
+
+    ; All digits have been drawn, we still need to draw the text
+    sub edi, SCORE_W                ; Position to draw the text
+    call DrawScoreText, edi, SCORE_Y
+
+    ret
+ENDP DrawScore
 
 PROC ResetBallAndPaddle
 
@@ -515,13 +575,11 @@ PROC BlockCollision
     jmp @@checkDuplicates           ; Check the next element
 
 @@noDuplicates:                     ; We haven't found any duplicated block number for the one we're considering now, so process this block number
-    mov ecx, [offset blocks + ebx]  ; Put the value of the block into ECX (we won't need the copy of the stack pointer anymore), block is definitely not black (already checked earlier)
-    dec ecx                         ; Decrement the value of the block
-    call DrawBlock, ebx, ecx
+    ; Decrement the value of the block
+    dec [byte ptr offset blocks + ebx]
     mov [edi], bl                   ; Indicate that the block has been changed
     inc edi
     inc eax                         ; Increase eax to display that we've hit a block
-    mov [offset blocks + ebx], ecx  ; Store the new block value
     jmp @@processBlocks             ; Process another block
 
 @@done:
